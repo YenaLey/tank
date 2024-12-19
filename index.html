@@ -32,15 +32,6 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { vec2, vec3, vec4, mat4, utils } from "wgpu-matrix";
 
-      const loc_position = 0;
-      const loc_normal = 1;
-      const loc_uv = 2;
-      const binding_matrices = 0;
-      const binding_light = 1;
-      const binding_sampler = 2;
-      const binding_colorTexture = 3;
-      const binding_etcTexture = 4;
-      const binding_normalTexture = 5;
       const format_depth_texture = "depth24plus";
 
       class UI {
@@ -58,11 +49,8 @@
 
         static onmousedown(ev) {
           if (ev.buttons === 1) {
-            if (ev.metaKey || ev.ctrlKey) {
-              UI.mouseMove = UI.TRANSLATING;
-            } else {
-              UI.mouseMove = UI.ROTATING;
-            }
+            if (ev.metaKey || ev.ctrlKey) UI.mouseMove = UI.TRANSLATING;
+            else UI.mouseMove = UI.ROTATING;
           }
         }
         static onmouseup(ev) {
@@ -113,9 +101,7 @@
             UI.camera.near,
             UI.camera.far
           );
-          if (!UI.matrices.R) {
-            UI.matrices.R = mat4.identity();
-          }
+          if (!UI.matrices.R) UI.matrices.R = mat4.identity();
           let T = mat4.translate(UI.matrices.P, UI.camera.position);
           UI.matrices.VP = mat4.multiply(T, UI.matrices.R);
         }
@@ -124,9 +110,8 @@
       function project(p_obj, MVP, viewport) {
         let tmp = vec4.transformMat4(p_obj, MVP);
         tmp = tmp.map((x) => x / tmp[3]);
-        for (let i = 0; i < 2; i++) {
+        for (let i = 0; i < 2; i++)
           tmp[i] = (0.5 * tmp[i] + 0.5) * viewport[i + 2] + viewport[i];
-        }
         return tmp;
       }
 
@@ -245,7 +230,7 @@
 
       function createGridAndAxesBuffers(device) {
         const lines = [];
-        // 축
+        // 축 + 그리드
         lines.push(...[0, 0, 0, 1, 0, 0]);
         lines.push(...[1, 0, 0, 1, 0, 0]);
         lines.push(...[0, 0, 0, 0, 1, 0]);
@@ -253,7 +238,6 @@
         lines.push(...[0, 0, 0, 0, 0, 1]);
         lines.push(...[0, 0, 1, 0, 0, 1]);
 
-        // 그리드: 0.7 회색
         for (let i = -5; i <= 5; i++) {
           lines.push(...[-5, 0, i, 0.7, 0.7, 0.7]);
           lines.push(...[5, 0, i, 0.7, 0.7, 0.7]);
@@ -272,15 +256,12 @@
 
       function createLocalAxesBuffer(device) {
         const axesLines = [];
-        // local axes
-        // X: red
-        axesLines.push(...[0, 0, 0, 1, 0, 0]);
+        // 로컬 축
+        axesLines.push(...[0, 0, 0, 1, 0, 0]); // X
         axesLines.push(...[0.5, 0, 0, 1, 0, 0]);
-        // Y: green
-        axesLines.push(...[0, 0, 0, 0, 1, 0]);
+        axesLines.push(...[0, 0, 0, 0, 1, 0]); // Y
         axesLines.push(...[0, 0.5, 0, 0, 1, 0]);
-        // Z: blue
-        axesLines.push(...[0, 0, 0, 0, 0, 1]);
+        axesLines.push(...[0, 0, 0, 0, 0, 1]); // Z
         axesLines.push(...[0, 0, 0.5, 0, 0, 1]);
 
         const data = new Float32Array(axesLines);
@@ -292,74 +273,110 @@
         return { buffer: buf, vertexCount: axesLines.length / 6 };
       }
 
+      // fragment shader 변경: uv를 기반으로 바퀴 색상 구분 + 현실적 질감
+      // partID: 0=Body, 1=Barrel, 2=Turret
+      // 바디와 터렛은 같은 녹색 계열, 배럴은 더 어두운 녹색.
+      // 바퀴 부분은 uv값으로 판단해서 다른 색상(예: 은색) 적용.
       const vertexCode = `
-      @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
-      @group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
-      @group(0) @binding(2) var<uniform> normalMatrix: mat4x4<f32>;
+    @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
+    @group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
+    @group(0) @binding(2) var<uniform> normalMatrix: mat4x4<f32>;
 
-      struct VertexInput {
-          @location(0) position: vec3<f32>,
-          @location(1) normal: vec3<f32>,
-          @location(2) uv: vec2<f32>,
-      };
+    struct VertexInput {
+        @location(0) position: vec3<f32>,
+        @location(1) normal: vec3<f32>,
+        @location(2) uv: vec2<f32>,
+    };
 
-      struct VertexOutput {
-          @builtin(position) position: vec4<f32>,
-          @location(0) fragPos: vec3<f32>,
-          @location(1) normal: vec3<f32>,
-          @location(2) uv: vec2<f32>,
-      };
+    struct VertexOutput {
+        @builtin(position) position: vec4<f32>,
+        @location(0) fragPos: vec3<f32>,
+        @location(1) normal: vec3<f32>,
+        @location(2) uv: vec2<f32>,
+    };
 
-      @vertex
-      fn main(input: VertexInput) -> VertexOutput {
-          var output: VertexOutput;
-          let worldPosition = modelMatrix * vec4<f32>(input.position,1.0);
-          output.position = sceneUniform * worldPosition;
-          output.fragPos = worldPosition.xyz;
-          output.normal = normalize((normalMatrix * vec4<f32>(input.normal,0.0)).xyz);
-          output.uv = input.uv;
-          return output;
-      }`;
+    @vertex
+    fn main(input:VertexInput)->VertexOutput{
+        var output:VertexOutput;
+        let worldPosition=modelMatrix*vec4<f32>(input.position,1.0);
+        output.position=sceneUniform*worldPosition;
+        output.fragPos=worldPosition.xyz;
+        output.normal=normalize((normalMatrix*vec4<f32>(input.normal,0.0)).xyz);
+        output.uv=input.uv;
+        return output;
+    }`;
 
       const fragmentCode = `
-      @group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
-      @group(0) @binding(4) var tankColor: texture_2d<f32>;
-      @group(0) @binding(5) var tankEtc: texture_2d<f32>;
-      @group(0) @binding(6) var tankNormalTex: texture_2d<f32>;
-      @group(0) @binding(7) var mySampler: sampler;
+@group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
+@group(0) @binding(4) var tankColor: texture_2d<f32>;
+@group(0) @binding(5) var tankEtc: texture_2d<f32>;
+@group(0) @binding(6) var tankNormalTex: texture_2d<f32>;
+@group(0) @binding(7) var mySampler: sampler;
+@group(0) @binding(8) var<uniform> partUniform: u32;
 
-      struct VertexOutput {
-          @builtin(position) position: vec4<f32>,
-          @location(0) fragPos: vec3<f32>,
-          @location(1) normal: vec3<f32>,
-          @location(2) uv: vec2<f32>,
-      };
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) fragPos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+};
 
-      @fragment
-      fn main(input: VertexOutput) -> @location(0) vec4<f32> {
-          let baseColor = textureSample(tankColor, mySampler, input.uv).rgb;
-          let etcColor = textureSample(tankEtc, mySampler, input.uv);
-          let AO = etcColor.r;
-          let roughness = etcColor.g;
-          let metalness = etcColor.b;
+@fragment
+fn main(input:VertexOutput)->@location(0) vec4<f32>{
+    let baseColor=textureSample(tankColor,mySampler,input.uv).rgb;
+    let etcColor=textureSample(tankEtc,mySampler,input.uv);
+    let AO=etcColor.r;
+    let roughness=etcColor.g; 
+    let metalness=etcColor.b; 
 
-          let normalColor = textureSample(tankNormalTex, mySampler, input.uv).rgb;
-          let N = normalize(normalColor*2.0 - 1.0);
+    let normalColor=textureSample(tankNormalTex,mySampler,input.uv).rgb;
+    let N=normalize(normalColor*2.0-1.0);
+    let L=normalize(lightDirection);
+    let V=normalize(-input.fragPos);
 
-          let ambient = AO * vec3<f32>(0.2,0.2,0.2);
+    let H = normalize(L+V);
+    let diffuse=max(dot(N,L),0.0);
+    let shininess = 80.0*(1.0-roughness); // 좀 더 샤프한 specular
+    let specular = pow(max(dot(N,H),0.0), shininess);
+    let specColor = mix(vec3<f32>(0.1,0.1,0.1), baseColor, metalness); // 어둡게
 
-          let L = normalize(lightDirection);
-          let V = normalize(-input.fragPos);
+    // 약간 더 어두운 환경(ambient)
+    let ambient=AO*vec3<f32>(0.4,0.4,0.4);
+    var finalColor=ambient + baseColor*diffuse + specular*specColor;
 
-          let diffuse = max(dot(N,L),0.0);
-          let H = normalize(L+V);
-          let specPower = mix(10.0,100.0,1.0-roughness);
-          let specular = pow(max(dot(N,H),0.0), specPower)*metalness;
+    let partID=partUniform;
 
-          let finalColor = ambient + baseColor*(diffuse+0.1) + vec3<f32>(0.3)*specular;
+    // 터렛, 바디는 진한 녹색 계열, 배럴은 더 어두운 녹색 계열
+    var bodyColor = vec3<f32>(0.3,0.5,0.3);    // 바디/터렛 색상 (짙은 녹색)
+    var barrelColor = vec3<f32>(0.1,0.2,0.05);// 배럴 색상 (더 어두운 녹색)
 
-          return vec4<f32>(finalColor,1.0);
-      }`;
+    // 바퀴 부분은 은색 계열로 가정
+    let outerWheelColor = vec3<f32>(0,0,0);
+    let innerWheelColor = vec3<f32>(0.1,0.1,0.1);
+
+    if(partID==0u){
+        // Body
+        // uv를 사용해 바퀴 부분 구분
+
+        let u = input.uv.x;
+        let v = input.uv.y;
+
+        if (u >= 0.1 && u <= 1 && v >= 0.68 && v <= 0.72){ 
+            // 안쪽 바퀴 또는 바디 다른 부분
+            finalColor = finalColor * innerWheelColor;
+        } else {
+          finalColor = finalColor * bodyColor;
+         }
+    } else if(partID==1u){
+        // Barrel
+        finalColor = finalColor * barrelColor;
+    } else if(partID==2u){
+        // Turret
+        finalColor = finalColor * bodyColor;
+    }
+
+    return vec4<f32>(finalColor,1.0);
+}`;
 
       async function main() {
         const adapter = await navigator.gpu.requestAdapter();
@@ -421,56 +438,21 @@
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
-        const tankState = {
-          position: [0, 0, 0],
-          rotation: 0,
-          turretRotation: 0,
-          barrelElevation: 0,
-        };
+        // 파트별 partID 고정 버퍼
+        function createPartIDBuffer(id) {
+          const buf = device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true,
+          });
+          new Uint32Array(buf.getMappedRange())[0] = id;
+          buf.unmap();
+          return buf;
+        }
 
-        window.addEventListener("keydown", (e) => {
-          // rotation=0일 때 탱크가 +X 방향으로 전진한다고 가정
-          // rotation 각도에 따라 전진 방향 벡터가 변함
-          let forwardX = Math.cos(tankState.rotation);
-          let forwardZ = Math.sin(tankState.rotation);
-
-          switch (e.key) {
-            case "ArrowUp":
-              // 로컬 축 기준 전진
-              tankState.position[0] += forwardX * 0.1;
-              tankState.position[2] -= forwardZ * 0.1;
-              break;
-            case "ArrowDown":
-              // 로컬 축 기준 후진
-              tankState.position[0] -= forwardX * 0.1;
-              tankState.position[2] += forwardZ * 0.1;
-              break;
-            case "ArrowLeft":
-              // 좌회전
-              tankState.rotation += 0.05;
-              break;
-            case "ArrowRight":
-              // 우회전
-              tankState.rotation -= 0.05;
-              break;
-            case "A":
-              tankState.turretRotation += 0.05;
-              break;
-            case "D":
-              tankState.turretRotation -= 0.05;
-              break;
-            case "W":
-              tankState.barrelElevation += 0.05;
-              if (tankState.barrelElevation > 0.5)
-                tankState.barrelElevation = 0.5;
-              break;
-            case "S":
-              tankState.barrelElevation -= 0.05;
-              if (tankState.barrelElevation < -0.3)
-                tankState.barrelElevation = -0.3;
-              break;
-          }
-        });
+        const partIDBuffer_Body = createPartIDBuffer(0);
+        const partIDBuffer_Barrel = createPartIDBuffer(1);
+        const partIDBuffer_Turret = createPartIDBuffer(2);
 
         const vertexModule = device.createShaderModule({ code: vertexCode });
         const fragmentModule = device.createShaderModule({
@@ -516,44 +498,52 @@
           },
         });
 
-        const bindGroup = device.createBindGroup({
-          layout: pipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: sceneBuffer } },
-            { binding: 1, resource: { buffer: modelBuffer } },
-            { binding: 2, resource: { buffer: normalBufferBuf } },
-            { binding: 3, resource: { buffer: lightBuffer } },
-            { binding: 4, resource: tankColor.createView() },
-            { binding: 5, resource: tankEtc.createView() },
-            { binding: 6, resource: tankNormal.createView() },
-            { binding: 7, resource: sampler },
-          ],
-        });
+        function createPartBindGroup(partIDBuf) {
+          return device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: sceneBuffer } },
+              { binding: 1, resource: { buffer: modelBuffer } },
+              { binding: 2, resource: { buffer: normalBufferBuf } },
+              { binding: 3, resource: { buffer: lightBuffer } },
+              { binding: 4, resource: tankColor.createView() },
+              { binding: 5, resource: tankEtc.createView() },
+              { binding: 6, resource: tankNormal.createView() },
+              { binding: 7, resource: sampler },
+              { binding: 8, resource: { buffer: partIDBuf } },
+            ],
+          });
+        }
+
+        const bindGroup_Body = createPartBindGroup(partIDBuffer_Body);
+        const bindGroup_Barrel = createPartBindGroup(partIDBuffer_Barrel);
+        const bindGroup_Turret = createPartBindGroup(partIDBuffer_Turret);
 
         const gridVertexCode = `
-      @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
+@group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
 
-      struct VertexInput {
-          @location(0) position: vec3<f32>,
-          @location(1) color: vec3<f32>,
-      };
-      struct VertexOutput {
-          @builtin(position) position: vec4<f32>,
-          @location(0) color: vec3<f32>,
-      };
+struct VertexInput {
+  @location(0) position: vec3<f32>,
+  @location(1) color: vec3<f32>,
+};
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) color: vec3<f32>,
+};
 
-      @vertex
-      fn main(input: VertexInput) -> VertexOutput {
-          var output: VertexOutput;
-          output.position = sceneUniform * vec4<f32>(input.position,1.0);
-          output.color = input.color;
-          return output;
-      }
+@vertex
+fn main(input:VertexInput)->VertexOutput{
+  var output:VertexOutput;
+  output.position=sceneUniform*vec4<f32>(input.position,1.0);
+  output.color=input.color;
+  return output;
+}
 
-      @fragment
-      fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-          return vec4<f32>(input.color,1.0);
-      }`;
+@fragment
+fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
+  return vec4<f32>(input.color,1.0);
+}`;
+
         const gridModule = device.createShaderModule({ code: gridVertexCode });
         const gridPipeline = device.createRenderPipeline({
           layout: "auto",
@@ -591,37 +581,37 @@
         });
 
         const localAxesVertexCode = `
-      @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
-      @group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
+@group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
+@group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
 
-      struct VertexInput {
-          @location(0) position: vec3<f32>,
-          @location(1) color: vec3<f32>,
-      };
-      struct VertexOutput {
-          @builtin(position) position: vec4<f32>,
-          @location(0) color: vec3<f32>,
-      };
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec3<f32>,
+};
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
 
-      @vertex
-      fn main(input: VertexInput) -> VertexOutput {
-          var output: VertexOutput;
-          let worldPos = modelMatrix * vec4<f32>(input.position,1.0);
-          output.position = sceneUniform * worldPos;
-          output.color = input.color;
-          return output;
-      }`;
+@vertex
+fn main(input:VertexInput)->VertexOutput{
+  var output:VertexOutput;
+  let worldPos=modelMatrix*vec4<f32>(input.position,1.0);
+  output.position=sceneUniform*worldPos;
+  output.color=input.color;
+  return output;
+}`;
 
         const localAxesFragmentCode = `
-      struct VertexOutput {
-          @builtin(position) position: vec4<f32>,
-          @location(0) color: vec3<f32>,
-      };
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
 
-      @fragment
-      fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-          return vec4<f32>(input.color,1.0);
-      }`;
+@fragment
+fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
+  return vec4<f32>(input.color,1.0);
+}`;
 
         const localAxesVertexModule = device.createShaderModule({
           code: localAxesVertexCode,
@@ -660,7 +650,6 @@
 
         const { buffer: localAxesBuffer, vertexCount: localAxesVertexCount } =
           createLocalAxesBuffer(device);
-
         const localAxesBindGroup = device.createBindGroup({
           layout: localAxesPipeline.getBindGroupLayout(0),
           entries: [
@@ -670,6 +659,54 @@
         });
 
         const barrelPivot = [0, 0, 0.5];
+        const tankState = {
+          position: [0, 0, 0],
+          rotation: 0,
+          turretRotation: 0,
+          barrelElevation: 0,
+        };
+
+        // 키 이벤트 처리: A/D 터렛 회전, W/S 배럴 상하
+        window.addEventListener("keydown", (e) => {
+          let forwardX = Math.cos(tankState.rotation);
+          let forwardZ = Math.sin(tankState.rotation);
+          switch (e.key) {
+            case "ArrowUp":
+              tankState.position[0] += forwardX * 0.1;
+              tankState.position[2] -= forwardZ * 0.1;
+              break;
+            case "ArrowDown":
+              tankState.position[0] -= forwardX * 0.1;
+              tankState.position[2] += forwardZ * 0.1;
+              break;
+            case "ArrowLeft":
+              tankState.rotation += 0.05;
+              break;
+            case "ArrowRight":
+              tankState.rotation -= 0.05;
+              break;
+            case "A":
+              // 터렛 왼쪽 회전
+              tankState.turretRotation += 0.05;
+              break;
+            case "D":
+              // 터렛 오른쪽 회전
+              tankState.turretRotation -= 0.05;
+              break;
+            case "W":
+              // 배럴 위로 올림
+              tankState.barrelElevation += 0.05;
+              if (tankState.barrelElevation > 0.5)
+                tankState.barrelElevation = 0.5;
+              break;
+            case "S":
+              // 배럴 아래로 내림
+              tankState.barrelElevation -= 0.05;
+              if (tankState.barrelElevation < -0.3)
+                tankState.barrelElevation = -0.3;
+              break;
+          }
+        });
 
         function renderFrame(time) {
           UI.update_VP();
@@ -731,17 +768,16 @@
           renderPass.setVertexBuffer(0, gridBuffer);
           renderPass.draw(gridVertexCount, 1, 0, 0);
 
-          renderPass.setPipeline(pipeline);
-          renderPass.setBindGroup(0, bindGroup);
-
-          // 차체
+          // BODY
           {
             let invM = mat4.invert(M_body);
             let normalMat = mat4.transpose(invM);
             device.queue.writeBuffer(modelBuffer, 0, M_body);
             device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
 
-            const m = meshData[0];
+            let m = meshData[0];
+            renderPass.setPipeline(pipeline);
+            renderPass.setBindGroup(0, bindGroup_Body);
             renderPass.setVertexBuffer(0, m.posBuffer);
             renderPass.setVertexBuffer(1, m.normalBuffer);
             renderPass.setVertexBuffer(2, m.uvBuffer);
@@ -749,29 +785,16 @@
             renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
           }
 
-          // 터렛
-          {
-            let invM = mat4.invert(M_turret);
-            let normalMat = mat4.transpose(invM);
-            device.queue.writeBuffer(modelBuffer, 0, M_turret);
-            device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
-
-            const m = meshData[1];
-            renderPass.setVertexBuffer(0, m.posBuffer);
-            renderPass.setVertexBuffer(1, m.normalBuffer);
-            renderPass.setVertexBuffer(2, m.uvBuffer);
-            renderPass.setIndexBuffer(m.indexBuffer, "uint32");
-            renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
-          }
-
-          // 배럴
+          // BARREL
           {
             let invM = mat4.invert(M_barrel);
             let normalMat = mat4.transpose(invM);
             device.queue.writeBuffer(modelBuffer, 0, M_barrel);
             device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
 
-            const m = meshData[2];
+            let m = meshData[1];
+            renderPass.setPipeline(pipeline);
+            renderPass.setBindGroup(0, bindGroup_Barrel);
             renderPass.setVertexBuffer(0, m.posBuffer);
             renderPass.setVertexBuffer(1, m.normalBuffer);
             renderPass.setVertexBuffer(2, m.uvBuffer);
@@ -779,7 +802,24 @@
             renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
           }
 
-          // 탱크 로컬 축
+          // TURRET
+          {
+            let invM = mat4.invert(M_turret);
+            let normalMat = mat4.transpose(invM);
+            device.queue.writeBuffer(modelBuffer, 0, M_turret);
+            device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
+
+            let m = meshData[2];
+            renderPass.setPipeline(pipeline);
+            renderPass.setBindGroup(0, bindGroup_Turret);
+            renderPass.setVertexBuffer(0, m.posBuffer);
+            renderPass.setVertexBuffer(1, m.normalBuffer);
+            renderPass.setVertexBuffer(2, m.uvBuffer);
+            renderPass.setIndexBuffer(m.indexBuffer, "uint32");
+            renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
+          }
+
+          // 로컬 축
           {
             device.queue.writeBuffer(modelBuffer, 0, M_body);
             renderPass.setPipeline(localAxesPipeline);
@@ -790,7 +830,6 @@
 
           renderPass.end();
           device.queue.submit([commandEncoder.finish()]);
-
           requestAnimationFrame(renderFrame);
         }
         requestAnimationFrame(renderFrame);
