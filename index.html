@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Interactive Tank</title>
+    <title>Interactive Tank (PBR & Tangent Space Normal)</title>
     <style>
       body,
       html {
@@ -13,11 +13,12 @@
       }
       canvas {
         display: block;
+        outline: none;
       }
     </style>
   </head>
   <body>
-    <canvas id="webgpu-canvas"></canvas>
+    <canvas id="webgpu-canvas" tabindex="1"></canvas>
     <script type="importmap">
       {
         "imports": {
@@ -140,6 +141,144 @@
         return vec;
       }
 
+      function computeTangents(positions, normals, uvs, indices) {
+        const vertexCount = positions.length / 3;
+        const tangents = new Float32Array(vertexCount * 3);
+        const bitangents = new Float32Array(vertexCount * 3);
+
+        // 삼각형 단위로 tangent/bitangent 계산
+        for (let i = 0; i < indices.length; i += 3) {
+          const i0 = indices[i + 0];
+          const i1 = indices[i + 1];
+          const i2 = indices[i + 2];
+
+          // positions
+          const x0 = positions[i0 * 3 + 0];
+          const y0 = positions[i0 * 3 + 1];
+          const z0 = positions[i0 * 3 + 2];
+
+          const x1 = positions[i1 * 3 + 0];
+          const y1 = positions[i1 * 3 + 1];
+          const z1 = positions[i1 * 3 + 2];
+
+          const x2 = positions[i2 * 3 + 0];
+          const y2 = positions[i2 * 3 + 1];
+          const z2 = positions[i2 * 3 + 2];
+
+          // uvs
+          const u0 = uvs[i0 * 2 + 0];
+          const v0 = uvs[i0 * 2 + 1];
+
+          const u1 = uvs[i1 * 2 + 0];
+          const v1 = uvs[i1 * 2 + 1];
+
+          const u2 = uvs[i2 * 2 + 0];
+          const v2 = uvs[i2 * 2 + 1];
+
+          const E1x = x1 - x0;
+          const E1y = y1 - y0;
+          const E1z = z1 - z0;
+
+          const E2x = x2 - x0;
+          const E2y = y2 - y0;
+          const E2z = z2 - z0;
+
+          const dU1 = u1 - u0;
+          const dV1 = v1 - v0;
+          const dU2 = u2 - u0;
+          const dV2 = v2 - v0;
+
+          let denom = dU1 * dV2 - dU2 * dV1;
+          if (denom === 0.0) {
+            // degenerate uv mapping
+            continue;
+          }
+
+          const r = 1.0 / denom;
+
+          const Tx = (E1x * dV2 - E2x * dV1) * r;
+          const Ty = (E1y * dV2 - E2y * dV1) * r;
+          const Tz = (E1z * dV2 - E2z * dV1) * r;
+
+          const Bx = (E2x * dU1 - E1x * dU2) * r;
+          const By = (E2y * dU1 - E1y * dU2) * r;
+          const Bz = (E2z * dU1 - E1z * dU2) * r;
+
+          // 누적
+          tangents[i0 * 3 + 0] += Tx;
+          tangents[i0 * 3 + 1] += Ty;
+          tangents[i0 * 3 + 2] += Tz;
+          tangents[i1 * 3 + 0] += Tx;
+          tangents[i1 * 3 + 1] += Ty;
+          tangents[i1 * 3 + 2] += Tz;
+          tangents[i2 * 3 + 0] += Tx;
+          tangents[i2 * 3 + 1] += Ty;
+          tangents[i2 * 3 + 2] += Tz;
+
+          bitangents[i0 * 3 + 0] += Bx;
+          bitangents[i0 * 3 + 1] += By;
+          bitangents[i0 * 3 + 2] += Bz;
+          bitangents[i1 * 3 + 0] += Bx;
+          bitangents[i1 * 3 + 1] += By;
+          bitangents[i1 * 3 + 2] += Bz;
+          bitangents[i2 * 3 + 0] += Bx;
+          bitangents[i2 * 3 + 1] += By;
+          bitangents[i2 * 3 + 2] += Bz;
+        }
+
+        // 각 정점별로 orthogonalize 및 normalize
+        for (let i = 0; i < vertexCount; i++) {
+          const nx = normals[i * 3 + 0];
+          const ny = normals[i * 3 + 1];
+          const nz = normals[i * 3 + 2];
+
+          // tangent
+          let tx = tangents[i * 3 + 0];
+          let ty = tangents[i * 3 + 1];
+          let tz = tangents[i * 3 + 2];
+
+          // normal에 대한 tangent 정규화 (N과 tangent를 직교화)
+          const NdotT = nx * tx + ny * ty + nz * tz;
+          tx = tx - NdotT * nx;
+          ty = ty - NdotT * ny;
+          tz = tz - NdotT * nz;
+
+          let tlen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+          if (tlen > 0.0) {
+            tx /= tlen;
+            ty /= tlen;
+            tz /= tlen;
+          }
+
+          tangents[i * 3 + 0] = tx;
+          tangents[i * 3 + 1] = ty;
+          tangents[i * 3 + 2] = tz;
+
+          // bitangent
+          let bx = bitangents[i * 3 + 0];
+          let by = bitangents[i * 3 + 1];
+          let bz = bitangents[i * 3 + 2];
+
+          const NdotB = nx * bx + ny * by + nz * bz;
+          bx = bx - NdotB * nx;
+          by = by - NdotB * ny;
+          bz = bz - NdotB * nz;
+
+          let blen = Math.sqrt(bx * bx + by * by + bz * bz);
+          if (blen > 0.0) {
+            bx /= blen;
+            by /= blen;
+            bz /= blen;
+          }
+
+          bitangents[i * 3 + 0] = bx;
+          bitangents[i * 3 + 1] = by;
+          bitangents[i * 3 + 2] = bz;
+        }
+
+        return { tangents, bitangents };
+      }
+
       async function loadAllMeshesFromGLTF(device, url) {
         const loader = new GLTFLoader();
         const gltf = await new Promise((resolve, reject) => {
@@ -169,6 +308,7 @@
         let meshData = [];
         for (let obj of meshes) {
           const positions = obj.geometry.attributes.position.array;
+
           const normals = obj.geometry.attributes.normal.array;
           const uvs = obj.geometry.attributes.uv
             ? obj.geometry.attributes.uv.array
@@ -180,6 +320,14 @@
             indices = tmp;
           }
 
+          // Tangent, Bitangent 계산
+          const { tangents, bitangents } = computeTangents(
+            positions,
+            normals,
+            uvs,
+            indices
+          );
+
           const posBuffer = createBufferFromArray(
             positions,
             GPUBufferUsage.VERTEX
@@ -189,6 +337,14 @@
             GPUBufferUsage.VERTEX
           );
           const uvBuffer = createBufferFromArray(uvs, GPUBufferUsage.VERTEX);
+          const tangentBuffer = createBufferFromArray(
+            tangents,
+            GPUBufferUsage.VERTEX
+          );
+          const bitangentBuffer = createBufferFromArray(
+            bitangents,
+            GPUBufferUsage.VERTEX
+          );
           const indexBuffer = createBufferFromArray(
             indices,
             GPUBufferUsage.INDEX
@@ -197,6 +353,8 @@
             posBuffer,
             normalBuffer,
             uvBuffer,
+            tangentBuffer,
+            bitangentBuffer,
             indexBuffer,
             indexCount: indices.length,
           });
@@ -228,171 +386,230 @@
         return texture;
       }
 
-      function createGridAndAxesBuffers(device) {
-        const lines = [];
-        // 축 + 그리드
-        lines.push(...[0, 0, 0, 1, 0, 0]);
-        lines.push(...[1, 0, 0, 1, 0, 0]);
-        lines.push(...[0, 0, 0, 0, 1, 0]);
-        lines.push(...[0, 1, 0, 0, 1, 0]);
-        lines.push(...[0, 0, 0, 0, 0, 1]);
-        lines.push(...[0, 0, 1, 0, 0, 1]);
-
-        for (let i = -5; i <= 5; i++) {
-          lines.push(...[-5, 0, i, 0.7, 0.7, 0.7]);
-          lines.push(...[5, 0, i, 0.7, 0.7, 0.7]);
-          lines.push(...[i, 0, -5, 0.7, 0.7, 0.7]);
-          lines.push(...[i, 0, 5, 0.7, 0.7, 0.7]);
-        }
-
-        const data = new Float32Array(lines);
-        const buf = device.createBuffer({
-          size: data.byteLength,
-          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      function createSampler(device) {
+        return device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          maxAnisotropy: 16,
         });
-        device.queue.writeBuffer(buf, 0, data);
-        return { buffer: buf, vertexCount: data.length / 6 };
       }
 
-      function createLocalAxesBuffer(device) {
-        const axesLines = [];
-        // 로컬 축
-        axesLines.push(...[0, 0, 0, 1, 0, 0]); // X
-        axesLines.push(...[0.5, 0, 0, 1, 0, 0]);
-        axesLines.push(...[0, 0, 0, 0, 1, 0]); // Y
-        axesLines.push(...[0, 0.5, 0, 0, 1, 0]);
-        axesLines.push(...[0, 0, 0, 0, 0, 1]); // Z
-        axesLines.push(...[0, 0, 0.5, 0, 0, 1]);
-
-        const data = new Float32Array(axesLines);
-        const buf = device.createBuffer({
-          size: data.byteLength,
-          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      function createDepthTexture(device, width, height, format) {
+        return device.createTexture({
+          size: [width, height],
+          format: format,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
         });
-        device.queue.writeBuffer(buf, 0, data);
-        return { buffer: buf, vertexCount: axesLines.length / 6 };
       }
 
-      // fragment shader 변경: uv를 기반으로 바퀴 색상 구분 + 현실적 질감
-      // partID: 0=Body, 1=Barrel, 2=Turret
-      // 바디와 터렛은 같은 녹색 계열, 배럴은 더 어두운 녹색.
-      // 바퀴 부분은 uv값으로 판단해서 다른 색상(예: 은색) 적용.
-      const vertexCode = `
-    @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
-    @group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
-    @group(0) @binding(2) var<uniform> normalMatrix: mat4x4<f32>;
+      // PBR Vertex, Fragment Shaders
+      const vertexShaderWGSL = `@group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
+@group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
+@group(0) @binding(2) var<uniform> normalMatrix: mat4x4<f32>;
 
-    struct VertexInput {
-        @location(0) position: vec3<f32>,
-        @location(1) normal: vec3<f32>,
-        @location(2) uv: vec2<f32>,
-    };
+struct VertexInput {
+  @location(0) position: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) tangent: vec3<f32>,
+  @location(4) bitangent: vec3<f32>,
+};
 
-    struct VertexOutput {
-        @builtin(position) position: vec4<f32>,
-        @location(0) fragPos: vec3<f32>,
-        @location(1) normal: vec3<f32>,
-        @location(2) uv: vec2<f32>,
-    };
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) fragPos: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) tangent: vec3<f32>,
+  @location(4) bitangent: vec3<f32>,
+};
 
-    @vertex
-    fn main(input:VertexInput)->VertexOutput{
-        var output:VertexOutput;
-        let worldPosition=modelMatrix*vec4<f32>(input.position,1.0);
-        output.position=sceneUniform*worldPosition;
-        output.fragPos=worldPosition.xyz;
-        output.normal=normalize((normalMatrix*vec4<f32>(input.normal,0.0)).xyz);
-        output.uv=input.uv;
-        return output;
-    }`;
+@vertex
+fn main(input: VertexInput) -> VertexOutput {
+  var output: VertexOutput;
 
-      const fragmentCode = `
-@group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
-@group(0) @binding(4) var tankColor: texture_2d<f32>;
-@group(0) @binding(5) var tankEtc: texture_2d<f32>;
-@group(0) @binding(6) var tankNormalTex: texture_2d<f32>;
+  let worldPos = modelMatrix * vec4<f32>(input.position, 1.0);
+  output.position = sceneUniform * worldPos;
+  output.fragPos = worldPos.xyz;
+
+  output.normal = normalize((normalMatrix * vec4<f32>(input.normal, 0.0)).xyz);
+  output.tangent = normalize((modelMatrix * vec4<f32>(input.tangent, 0.0)).xyz);
+  output.bitangent = normalize((modelMatrix * vec4<f32>(input.bitangent, 0.0)).xyz);
+
+  output.uv = input.uv;
+  return output;
+}`;
+
+      const fragmentShaderWGSL = `@group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
+@group(0) @binding(4) var colorTex: texture_2d<f32>;  
+@group(0) @binding(5) var etcTex: texture_2d<f32>;    
+@group(0) @binding(6) var normalTex: texture_2d<f32>; 
 @group(0) @binding(7) var mySampler: sampler;
 @group(0) @binding(8) var<uniform> partUniform: u32;
 
+const PI = 3.14159265359;
+
+fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
+  return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+fn ndfGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+  let a = roughness * roughness;
+  let a2 = a * a;
+  let NdotH = max(dot(N, H), 0.0);
+  let NdotH2 = NdotH * NdotH;
+  let denom = NdotH2 * (a2 - 1.0) + 1.0;
+  return a2 / (PI * denom * denom);
+}
+
+fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+  let k = (roughness + 1.0)*(roughness + 1.0)/8.0;
+  let G1V = dot(N, V)/(dot(N, V)*(1.0 - k) + k);
+  let G1L = dot(N, L)/(dot(N, L)*(1.0 - k) + k);
+  return G1V * G1L;
+}
+
 struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) fragPos: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
+  @builtin(position) position: vec4<f32>,
+  @location(0) fragPos: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) tangent: vec3<f32>,
+  @location(4) bitangent: vec3<f32>,
 };
 
 @fragment
-fn main(input:VertexOutput)->@location(0) vec4<f32>{
-    let baseColor=textureSample(tankColor,mySampler,input.uv).rgb;
-    let etcColor=textureSample(tankEtc,mySampler,input.uv);
-    let AO=etcColor.r;
-    let roughness=etcColor.g; 
-    let metalness=etcColor.b; 
+fn main(input: VertexOutput)->@location(0) vec4<f32> {
+  let baseColor_srgb = textureSample(colorTex,mySampler,input.uv).rgb;
+  let baseColor = pow(baseColor_srgb, vec3<f32>(2.2));
+  let etcColor = textureSample(etcTex,mySampler,input.uv);
+  let AO = etcColor.r;
+  let roughness = etcColor.g;
+  let metallic = etcColor.b;
 
-    let normalColor=textureSample(tankNormalTex,mySampler,input.uv).rgb;
-    let N=normalize(normalColor*2.0-1.0);
-    let L=normalize(lightDirection);
-    let V=normalize(-input.fragPos);
+  let normalSample = textureSample(normalTex, mySampler, input.uv).rgb;
+  var N_map = normalSample * 2.0 - 1.0;
+  let tangentNormal = normalize(-N_map);
 
-    let H = normalize(L+V);
-    let diffuse=max(dot(N,L),0.0);
-    let shininess = 80.0*(1.0-roughness); // 좀 더 샤프한 specular
-    let specular = pow(max(dot(N,H),0.0), shininess);
-    let specColor = mix(vec3<f32>(0.1,0.1,0.1), baseColor, metalness); // 어둡게
 
-    // 약간 더 어두운 환경(ambient)
-    let ambient=AO*vec3<f32>(0.4,0.4,0.4);
-    var finalColor=ambient + baseColor*diffuse + specular*specColor;
+  let T = normalize(input.tangent);
+  let B = normalize(input.bitangent);
+  let N = normalize(input.normal);
+  let TBN = mat3x3<f32>(T, B, N);
 
-    let partID=partUniform;
+  let worldNormal = normalize(TBN * tangentNormal);
 
-    // 터렛, 바디는 진한 녹색 계열, 배럴은 더 어두운 녹색 계열
-    var bodyColor = vec3<f32>(0.3,0.5,0.3);    // 바디/터렛 색상 (짙은 녹색)
-    var barrelColor = vec3<f32>(0.1,0.2,0.05);// 배럴 색상 (더 어두운 녹색)
+  let L = normalize(-lightDirection);
+  let V = normalize(-input.fragPos);
+  let H = normalize(L + V);
 
-    // 바퀴 부분은 은색 계열로 가정
-    let outerWheelColor = vec3<f32>(0,0,0);
-    let innerWheelColor = vec3<f32>(0.1,0.1,0.1);
+  let NDF = ndfGGX(worldNormal, H, roughness);
+  let G = geometrySmith(worldNormal, V, L, roughness);
+  let F0 = mix(vec3<f32>(0.04,0.04,0.04), baseColor, metallic);
+  let F = fresnelSchlick(max(dot(H, V),0.0), F0);
 
-    if(partID==0u){
-        // Body
-        // uv를 사용해 바퀴 부분 구분
+  let kS = F * (NDF * G) / (4.0 * max(dot(worldNormal, V),0.0) * max(dot(worldNormal, L),0.0) + 0.001);
+  let kD = vec3<f32>(1.0) - F;
+  let kDWeighted = kD * (1.0 - metallic);
 
-        let u = input.uv.x;
-        let v = input.uv.y;
+  let diffuse = max(dot(worldNormal, L),0.0)*baseColor;
+  let ambient = AO * vec3<f32>(0.1,0.1,0.1);
+  var finalColor = ambient + kDWeighted*diffuse + kS;
 
-        if (u >= 0.1 && u <= 1 && v >= 0.68 && v <= 0.72){ 
-            // 안쪽 바퀴 또는 바디 다른 부분
-            finalColor = finalColor * innerWheelColor;
-        } else {
-          finalColor = finalColor * bodyColor;
-         }
-    } else if(partID==1u){
-        // Barrel
-        finalColor = finalColor * barrelColor;
-    } else if(partID==2u){
-        // Turret
-        finalColor = finalColor * bodyColor;
-    }
+  // partUniform에 따른 색 변형
+  if (partUniform == 0u) {
+    finalColor *= vec3<f32>(0.35,0.45,0.35);
+  } else if (partUniform == 1u) {
+    finalColor *= vec3<f32>(0.4,0.5,0.4);
+  } else if (partUniform == 2u) {
+    finalColor *= vec3<f32>(1,1,1);
+  } else if (partUniform == 3u) {
+    finalColor *= vec3<f32>(0.4,0.3,0.1);
+  } else if (partUniform == 4u) {
+    finalColor *= vec3<f32>(0.1,0.2,0.1);
+  } else if (partUniform == 5u) {
+    finalColor *= vec3<f32>(0.1,0.2,0.1);
+  }
 
-    return vec4<f32>(finalColor,1.0);
-}`;
+  let gamma = 2.2;
+  finalColor = pow(finalColor, vec3<f32>(1.0/gamma));
+  return vec4<f32>(finalColor, 1.0);
+}
+`;
 
+      function createRenderPipeline(
+        device,
+        vertexModule,
+        fragmentModule,
+        depthFormat,
+        preferredFormat
+      ) {
+        return device.createRenderPipeline({
+          layout: "auto",
+          vertex: {
+            module: vertexModule,
+            entryPoint: "main",
+            buffers: [
+              {
+                arrayStride: 4 * 3, // position
+                attributes: [
+                  { shaderLocation: 0, offset: 0, format: "float32x3" },
+                ],
+              },
+              {
+                arrayStride: 4 * 3, // normal
+                attributes: [
+                  { shaderLocation: 1, offset: 0, format: "float32x3" },
+                ],
+              },
+              {
+                arrayStride: 4 * 2, // uv
+                attributes: [
+                  { shaderLocation: 2, offset: 0, format: "float32x2" },
+                ],
+              },
+              {
+                arrayStride: 4 * 3, // tangent
+                attributes: [
+                  { shaderLocation: 3, offset: 0, format: "float32x3" },
+                ],
+              },
+              {
+                arrayStride: 4 * 3, // bitangent
+                attributes: [
+                  { shaderLocation: 4, offset: 0, format: "float32x3" },
+                ],
+              },
+            ],
+          },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "main",
+            targets: [{ format: preferredFormat }],
+          },
+          primitive: { topology: "triangle-list" },
+          depthStencil: {
+            format: depthFormat,
+            depthWriteEnabled: true,
+            depthCompare: "less",
+          },
+        });
+      }
       async function main() {
+        const canvas = document.getElementById("webgpu-canvas");
         const adapter = await navigator.gpu.requestAdapter();
         const device = await adapter.requestDevice();
-        if (!device) throw Error("WebGPU not supported.");
+        const context = canvas.getContext("webgpu");
+        const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
 
-        const canvas = document.getElementById("webgpu-canvas");
-        UI.canvas = canvas;
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        const context = canvas.getContext("webgpu");
-        const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
         context.configure({
-          device,
+          device: device,
           format: preferredFormat,
+          alphaMode: "opaque",
         });
 
         canvas.onmousedown = UI.onmousedown;
@@ -400,9 +617,13 @@ fn main(input:VertexOutput)->@location(0) vec4<f32>{
         canvas.onmousemove = UI.onmousemove;
         window.addEventListener("wheel", UI.onwheel, { passive: false });
 
+        UI.canvas = canvas;
         UI.update_VP();
 
+        // 탱크 로딩
         const meshData = await loadAllMeshesFromGLTF(device, "models/tank.glb");
+
+        // 텍스처 로딩
         const tankColor = await loadImageAsTexture(
           device,
           "textures/tank-color.jpg"
@@ -416,10 +637,20 @@ fn main(input:VertexOutput)->@location(0) vec4<f32>{
           "textures/tank-normal.png"
         );
 
-        const sampler = device.createSampler({
-          magFilter: "linear",
-          minFilter: "linear",
-        });
+        const shellColor = await loadImageAsTexture(
+          device,
+          "textures/shell-color.png"
+        );
+        const shellEtc = await loadImageAsTexture(
+          device,
+          "textures/shell-etc.png"
+        );
+        const shellNormal = await loadImageAsTexture(
+          device,
+          "textures/shell-normal.png"
+        );
+
+        const sampler = createSampler(device);
 
         const sceneBuffer = device.createBuffer({
           size: 64,
@@ -429,7 +660,7 @@ fn main(input:VertexOutput)->@location(0) vec4<f32>{
           size: 64,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
-        const normalBufferBuf = device.createBuffer({
+        const normalMatrixBuffer = device.createBuffer({
           size: 64,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
@@ -438,7 +669,6 @@ fn main(input:VertexOutput)->@location(0) vec4<f32>{
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
-        // 파트별 partID 고정 버퍼
         function createPartIDBuffer(id) {
           const buf = device.createBuffer({
             size: 4,
@@ -450,75 +680,84 @@ fn main(input:VertexOutput)->@location(0) vec4<f32>{
           return buf;
         }
 
+        // partIDs: 0=body,1=turret,2=innerWheel,3=outerWheel,4=barrel,5=shell
         const partIDBuffer_Body = createPartIDBuffer(0);
-        const partIDBuffer_Barrel = createPartIDBuffer(1);
-        const partIDBuffer_Turret = createPartIDBuffer(2);
+        const partIDBuffer_Turret = createPartIDBuffer(1);
+        const partIDBuffer_InnerWheel = createPartIDBuffer(2);
+        const partIDBuffer_OuterWheel = createPartIDBuffer(3);
+        const partIDBuffer_Barrel = createPartIDBuffer(4);
+        const partIDBuffer_Shell = createPartIDBuffer(5); // 쉘 존재 시
 
-        const vertexModule = device.createShaderModule({ code: vertexCode });
+        const vertexModule = device.createShaderModule({
+          code: vertexShaderWGSL,
+        });
         const fragmentModule = device.createShaderModule({
-          code: fragmentCode,
+          code: fragmentShaderWGSL,
         });
 
-        const pipeline = device.createRenderPipeline({
-          layout: "auto",
-          vertex: {
-            module: vertexModule,
-            entryPoint: "main",
-            buffers: [
-              {
-                arrayStride: 4 * 3,
-                attributes: [
-                  { shaderLocation: 0, offset: 0, format: "float32x3" },
-                ],
-              },
-              {
-                arrayStride: 4 * 3,
-                attributes: [
-                  { shaderLocation: 1, offset: 0, format: "float32x3" },
-                ],
-              },
-              {
-                arrayStride: 4 * 2,
-                attributes: [
-                  { shaderLocation: 2, offset: 0, format: "float32x2" },
-                ],
-              },
-            ],
-          },
-          fragment: {
-            module: fragmentModule,
-            entryPoint: "main",
-            targets: [{ format: preferredFormat }],
-          },
-          primitive: { topology: "triangle-list" },
-          depthStencil: {
-            format: format_depth_texture,
-            depthWriteEnabled: true,
-            depthCompare: "less",
-          },
-        });
+        const pipeline = createRenderPipeline(
+          device,
+          vertexModule,
+          fragmentModule,
+          "depth24plus",
+          preferredFormat
+        );
 
-        function createPartBindGroup(partIDBuf) {
+        function createBindGroup(colorTex, etcTex, normalTex, partIDBuf) {
           return device.createBindGroup({
             layout: pipeline.getBindGroupLayout(0),
             entries: [
               { binding: 0, resource: { buffer: sceneBuffer } },
               { binding: 1, resource: { buffer: modelBuffer } },
-              { binding: 2, resource: { buffer: normalBufferBuf } },
+              { binding: 2, resource: { buffer: normalMatrixBuffer } },
               { binding: 3, resource: { buffer: lightBuffer } },
-              { binding: 4, resource: tankColor.createView() },
-              { binding: 5, resource: tankEtc.createView() },
-              { binding: 6, resource: tankNormal.createView() },
+              { binding: 4, resource: colorTex.createView() },
+              { binding: 5, resource: etcTex.createView() },
+              { binding: 6, resource: normalTex.createView() },
               { binding: 7, resource: sampler },
               { binding: 8, resource: { buffer: partIDBuf } },
             ],
           });
         }
 
-        const bindGroup_Body = createPartBindGroup(partIDBuffer_Body);
-        const bindGroup_Barrel = createPartBindGroup(partIDBuffer_Barrel);
-        const bindGroup_Turret = createPartBindGroup(partIDBuffer_Turret);
+        const bindGroup_Body = createBindGroup(
+          tankColor,
+          tankEtc,
+          tankNormal,
+          partIDBuffer_Body
+        );
+        const bindGroup_Turret = createBindGroup(
+          tankColor,
+          tankEtc,
+          tankNormal,
+          partIDBuffer_Turret
+        );
+        const bindGroup_InnerWheel = createBindGroup(
+          tankColor,
+          tankEtc,
+          tankNormal,
+          partIDBuffer_InnerWheel
+        );
+        const bindGroup_OuterWheel = createBindGroup(
+          tankColor,
+          tankEtc,
+          tankNormal,
+          partIDBuffer_OuterWheel
+        );
+        const bindGroup_Barrel = createBindGroup(
+          tankColor,
+          tankEtc,
+          tankNormal,
+          partIDBuffer_Barrel
+        );
+        const bindGroup_Shell = createBindGroup(
+          shellColor,
+          shellEtc,
+          shellNormal,
+          partIDBuffer_Shell
+        );
 
+        // 그리드와 로컬 축 파이프라인
         const gridVertexCode = `
 @group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
 
@@ -567,14 +806,38 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           },
           primitive: { topology: "line-list" },
           depthStencil: {
-            format: format_depth_texture,
+            format: "depth24plus",
             depthWriteEnabled: true,
             depthCompare: "less",
           },
         });
 
         const { buffer: gridBuffer, vertexCount: gridVertexCount } =
-          createGridAndAxesBuffers(device);
+          (function createGridAndAxesBuffers(device) {
+            const lines = [];
+            lines.push(...[0, 0, 0, 1, 0, 0]);
+            lines.push(...[1, 0, 0, 1, 0, 0]);
+            lines.push(...[0, 0, 0, 0, 1, 0]);
+            lines.push(...[0, 1, 0, 0, 1, 0]);
+            lines.push(...[0, 0, 0, 0, 0, 1]);
+            lines.push(...[0, 0, 1, 0, 0, 1]);
+
+            for (let i = -5; i <= 5; i++) {
+              lines.push(...[-5, 0, i, 0.7, 0.7, 0.7]);
+              lines.push(...[5, 0, i, 0.7, 0.7, 0.7]);
+              lines.push(...[i, 0, -5, 0.7, 0.7, 0.7]);
+              lines.push(...[i, 0, 5, 0.7, 0.7, 0.7]);
+            }
+
+            const data = new Float32Array(lines);
+            const buf = device.createBuffer({
+              size: data.byteLength,
+              usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(buf, 0, data);
+            return { buffer: buf, vertexCount: data.length / 6 };
+          })(device);
+
         const gridBindGroup = device.createBindGroup({
           layout: gridPipeline.getBindGroupLayout(0),
           entries: [{ binding: 0, resource: { buffer: sceneBuffer } }],
@@ -642,14 +905,31 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           },
           primitive: { topology: "line-list" },
           depthStencil: {
-            format: format_depth_texture,
+            format: "depth24plus",
             depthWriteEnabled: true,
             depthCompare: "less",
           },
         });
 
         const { buffer: localAxesBuffer, vertexCount: localAxesVertexCount } =
-          createLocalAxesBuffer(device);
+          (function createLocalAxesBuffer(device) {
+            const axesLines = [];
+            axesLines.push(...[0, 0, 0, 1, 0, 0]);
+            axesLines.push(...[0.5, 0, 0, 1, 0, 0]);
+            axesLines.push(...[0, 0, 0, 0, 1, 0]);
+            axesLines.push(...[0, 0.5, 0, 0, 1, 0]);
+            axesLines.push(...[0, 0, 0, 0, 0, 1]);
+            axesLines.push(...[0, 0, 0.5, 0, 0, 1]);
+
+            const data = new Float32Array(axesLines);
+            const buf = device.createBuffer({
+              size: data.byteLength,
+              usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(buf, 0, data);
+            return { buffer: buf, vertexCount: axesLines.length / 6 };
+          })(device);
+
         const localAxesBindGroup = device.createBindGroup({
           layout: localAxesPipeline.getBindGroupLayout(0),
           entries: [
@@ -666,7 +946,6 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           barrelElevation: 0,
         };
 
-        // 키 이벤트 처리: A/D 터렛 회전, W/S 배럴 상하
         window.addEventListener("keydown", (e) => {
           let forwardX = Math.cos(tankState.rotation);
           let forwardZ = Math.sin(tankState.rotation);
@@ -686,27 +965,40 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
               tankState.rotation -= 0.05;
               break;
             case "A":
-              // 터렛 왼쪽 회전
               tankState.turretRotation += 0.05;
               break;
             case "D":
-              // 터렛 오른쪽 회전
               tankState.turretRotation -= 0.05;
               break;
             case "W":
-              // 배럴 위로 올림
               tankState.barrelElevation += 0.05;
               if (tankState.barrelElevation > 0.5)
                 tankState.barrelElevation = 0.5;
               break;
             case "S":
-              // 배럴 아래로 내림
               tankState.barrelElevation -= 0.05;
               if (tankState.barrelElevation < -0.3)
                 tankState.barrelElevation = -0.3;
               break;
           }
         });
+
+        function drawPart(renderPass, M, bindGroup, mesh) {
+          let invM = mat4.invert(M);
+          let normalMat = mat4.transpose(invM);
+          device.queue.writeBuffer(modelBuffer, 0, M);
+          device.queue.writeBuffer(normalMatrixBuffer, 0, normalMat);
+
+          renderPass.setPipeline(pipeline);
+          renderPass.setBindGroup(0, bindGroup);
+          renderPass.setVertexBuffer(0, mesh.posBuffer);
+          renderPass.setVertexBuffer(1, mesh.normalBuffer);
+          renderPass.setVertexBuffer(2, mesh.uvBuffer);
+          renderPass.setVertexBuffer(3, mesh.tangentBuffer);
+          renderPass.setVertexBuffer(4, mesh.bitangentBuffer);
+          renderPass.setIndexBuffer(mesh.indexBuffer, "uint32");
+          renderPass.drawIndexed(mesh.indexCount, 1, 0, 0, 0);
+        }
 
         function renderFrame(time) {
           UI.update_VP();
@@ -724,6 +1016,9 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             [0, 1, 0],
             tankState.turretRotation
           );
+          let M_innerWheel = M_body;
+          let M_outerWheel = M_body;
+
           let M_barrel = mat4.translate(M_turret, barrelPivot);
           M_barrel = mat4.rotateX(M_barrel, tankState.barrelElevation);
           M_barrel = mat4.translate(M_barrel, [
@@ -732,18 +1027,20 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             -barrelPivot[2],
           ]);
 
-          const lightDir = new Float32Array([0.3, -1.0, 0.3]);
+          let M_shell = mat4.translate(M_body, [0.5, 0.5, -0.5]); // 쉘 위치 예시
+
+          const lightDir = new Float32Array([0.3, 1.0, 0.3]);
           device.queue.writeBuffer(lightBuffer, 0, lightDir);
           device.queue.writeBuffer(sceneBuffer, 0, UI.matrices.VP);
 
+          const depthTexture = createDepthTexture(
+            device,
+            canvas.width,
+            canvas.height,
+            "depth24plus"
+          );
           const commandEncoder = device.createCommandEncoder();
           const textureView = context.getCurrentTexture().createView();
-
-          const depthTexture = device.createTexture({
-            size: [canvas.width, canvas.height],
-            format: format_depth_texture,
-            usage: GPUTextureUsage.RENDER_ATTACHMENT,
-          });
 
           const renderPass = commandEncoder.beginRenderPass({
             colorAttachments: [
@@ -762,77 +1059,42 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             },
           });
 
-          // 그리드/축
+          // 그리드
           renderPass.setPipeline(gridPipeline);
           renderPass.setBindGroup(0, gridBindGroup);
           renderPass.setVertexBuffer(0, gridBuffer);
           renderPass.draw(gridVertexCount, 1, 0, 0);
 
-          // BODY
-          {
-            let invM = mat4.invert(M_body);
-            let normalMat = mat4.transpose(invM);
-            device.queue.writeBuffer(modelBuffer, 0, M_body);
-            device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
+          // 탱크 파츠 드로우
+          drawPart(renderPass, M_body, bindGroup_Body, meshData[0]);
+          drawPart(renderPass, M_turret, bindGroup_Turret, meshData[1]);
+          drawPart(renderPass, M_innerWheel, bindGroup_InnerWheel, meshData[2]);
+          drawPart(renderPass, M_outerWheel, bindGroup_OuterWheel, meshData[3]);
+          drawPart(renderPass, M_barrel, bindGroup_Barrel, meshData[4]);
 
-            let m = meshData[0];
-            renderPass.setPipeline(pipeline);
-            renderPass.setBindGroup(0, bindGroup_Body);
-            renderPass.setVertexBuffer(0, m.posBuffer);
-            renderPass.setVertexBuffer(1, m.normalBuffer);
-            renderPass.setVertexBuffer(2, m.uvBuffer);
-            renderPass.setIndexBuffer(m.indexBuffer, "uint32");
-            renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
-          }
-
-          // BARREL
-          {
-            let invM = mat4.invert(M_barrel);
-            let normalMat = mat4.transpose(invM);
-            device.queue.writeBuffer(modelBuffer, 0, M_barrel);
-            device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
-
-            let m = meshData[1];
-            renderPass.setPipeline(pipeline);
-            renderPass.setBindGroup(0, bindGroup_Barrel);
-            renderPass.setVertexBuffer(0, m.posBuffer);
-            renderPass.setVertexBuffer(1, m.normalBuffer);
-            renderPass.setVertexBuffer(2, m.uvBuffer);
-            renderPass.setIndexBuffer(m.indexBuffer, "uint32");
-            renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
-          }
-
-          // TURRET
-          {
-            let invM = mat4.invert(M_turret);
-            let normalMat = mat4.transpose(invM);
-            device.queue.writeBuffer(modelBuffer, 0, M_turret);
-            device.queue.writeBuffer(normalBufferBuf, 0, normalMat);
-
-            let m = meshData[2];
-            renderPass.setPipeline(pipeline);
-            renderPass.setBindGroup(0, bindGroup_Turret);
-            renderPass.setVertexBuffer(0, m.posBuffer);
-            renderPass.setVertexBuffer(1, m.normalBuffer);
-            renderPass.setVertexBuffer(2, m.uvBuffer);
-            renderPass.setIndexBuffer(m.indexBuffer, "uint32");
-            renderPass.drawIndexed(m.indexCount, 1, 0, 0, 0);
+          if (meshData.length > 5) {
+            drawPart(renderPass, M_shell, bindGroup_Shell, meshData[5]);
           }
 
           // 로컬 축
-          {
-            device.queue.writeBuffer(modelBuffer, 0, M_body);
-            renderPass.setPipeline(localAxesPipeline);
-            renderPass.setBindGroup(0, localAxesBindGroup);
-            renderPass.setVertexBuffer(0, localAxesBuffer);
-            renderPass.draw(localAxesVertexCount, 1, 0, 0);
-          }
+          device.queue.writeBuffer(modelBuffer, 0, M_body);
+          renderPass.setPipeline(localAxesPipeline);
+          renderPass.setBindGroup(0, localAxesBindGroup);
+          renderPass.setVertexBuffer(0, localAxesBuffer);
+          renderPass.draw(localAxesVertexCount, 1, 0, 0);
 
           renderPass.end();
           device.queue.submit([commandEncoder.finish()]);
           requestAnimationFrame(renderFrame);
         }
+
         requestAnimationFrame(renderFrame);
+
+        window.addEventListener("resize", () => {
+          canvas.width = canvas.clientWidth * devicePixelRatio;
+          canvas.height = canvas.clientHeight * devicePixelRatio;
+          context.configure({ device, format: preferredFormat });
+        });
       }
 
       main();
