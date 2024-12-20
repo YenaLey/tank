@@ -31,6 +31,7 @@
     <script type="module">
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
       import { vec2, vec3, vec4, mat4, utils } from "wgpu-matrix";
 
       const format_depth_texture = "depth24plus";
@@ -146,132 +147,104 @@
         const tangents = new Float32Array(vertexCount * 3);
         const bitangents = new Float32Array(vertexCount * 3);
 
-        // 삼각형 단위로 tangent/bitangent 계산
         for (let i = 0; i < indices.length; i += 3) {
-          const i0 = indices[i + 0];
-          const i1 = indices[i + 1];
-          const i2 = indices[i + 2];
+          const i0 = indices[i],
+            i1 = indices[i + 1],
+            i2 = indices[i + 2];
+          const x0 = positions[i0 * 3],
+            y0 = positions[i0 * 3 + 1],
+            z0 = positions[i0 * 3 + 2];
+          const x1 = positions[i1 * 3],
+            y1 = positions[i1 * 3 + 1],
+            z1 = positions[i1 * 3 + 2];
+          const x2 = positions[i2 * 3],
+            y2 = positions[i2 * 3 + 1],
+            z2 = positions[i2 * 3 + 2];
 
-          // positions
-          const x0 = positions[i0 * 3 + 0];
-          const y0 = positions[i0 * 3 + 1];
-          const z0 = positions[i0 * 3 + 2];
+          const u0 = uvs[i0 * 2],
+            v0 = uvs[i0 * 2 + 1];
+          const u1 = uvs[i1 * 2],
+            v1 = uvs[i1 * 2 + 1];
+          const u2 = uvs[i2 * 2],
+            v2 = uvs[i2 * 2 + 1];
 
-          const x1 = positions[i1 * 3 + 0];
-          const y1 = positions[i1 * 3 + 1];
-          const z1 = positions[i1 * 3 + 2];
-
-          const x2 = positions[i2 * 3 + 0];
-          const y2 = positions[i2 * 3 + 1];
-          const z2 = positions[i2 * 3 + 2];
-
-          // uvs
-          const u0 = uvs[i0 * 2 + 0];
-          const v0 = uvs[i0 * 2 + 1];
-
-          const u1 = uvs[i1 * 2 + 0];
-          const v1 = uvs[i1 * 2 + 1];
-
-          const u2 = uvs[i2 * 2 + 0];
-          const v2 = uvs[i2 * 2 + 1];
-
-          const E1x = x1 - x0;
-          const E1y = y1 - y0;
-          const E1z = z1 - z0;
-
-          const E2x = x2 - x0;
-          const E2y = y2 - y0;
-          const E2z = z2 - z0;
-
-          const dU1 = u1 - u0;
-          const dV1 = v1 - v0;
-          const dU2 = u2 - u0;
-          const dV2 = v2 - v0;
+          const E1x = x1 - x0,
+            E1y = y1 - y0,
+            E1z = z1 - z0;
+          const E2x = x2 - x0,
+            E2y = y2 - y0,
+            E2z = z2 - z0;
+          const dU1 = u1 - u0,
+            dV1 = v1 - v0;
+          const dU2 = u2 - u0,
+            dV2 = v2 - v0;
 
           let denom = dU1 * dV2 - dU2 * dV1;
-          if (denom === 0.0) {
-            // degenerate uv mapping
-            continue;
-          }
-
+          if (denom === 0.0) continue;
           const r = 1.0 / denom;
-
           const Tx = (E1x * dV2 - E2x * dV1) * r;
           const Ty = (E1y * dV2 - E2y * dV1) * r;
           const Tz = (E1z * dV2 - E2z * dV1) * r;
-
           const Bx = (E2x * dU1 - E1x * dU2) * r;
           const By = (E2y * dU1 - E1y * dU2) * r;
           const Bz = (E2z * dU1 - E1z * dU2) * r;
 
-          // 누적
-          tangents[i0 * 3 + 0] += Tx;
+          tangents[i0 * 3] += Tx;
           tangents[i0 * 3 + 1] += Ty;
           tangents[i0 * 3 + 2] += Tz;
-          tangents[i1 * 3 + 0] += Tx;
+          tangents[i1 * 3] += Tx;
           tangents[i1 * 3 + 1] += Ty;
           tangents[i1 * 3 + 2] += Tz;
-          tangents[i2 * 3 + 0] += Tx;
+          tangents[i2 * 3] += Tx;
           tangents[i2 * 3 + 1] += Ty;
           tangents[i2 * 3 + 2] += Tz;
 
-          bitangents[i0 * 3 + 0] += Bx;
+          bitangents[i0 * 3] += Bx;
           bitangents[i0 * 3 + 1] += By;
           bitangents[i0 * 3 + 2] += Bz;
-          bitangents[i1 * 3 + 0] += Bx;
+          bitangents[i1 * 3] += Bx;
           bitangents[i1 * 3 + 1] += By;
           bitangents[i1 * 3 + 2] += Bz;
-          bitangents[i2 * 3 + 0] += Bx;
+          bitangents[i2 * 3] += Bx;
           bitangents[i2 * 3 + 1] += By;
           bitangents[i2 * 3 + 2] += Bz;
         }
 
-        // 각 정점별로 orthogonalize 및 normalize
         for (let i = 0; i < vertexCount; i++) {
-          const nx = normals[i * 3 + 0];
-          const ny = normals[i * 3 + 1];
-          const nz = normals[i * 3 + 2];
-
-          // tangent
-          let tx = tangents[i * 3 + 0];
-          let ty = tangents[i * 3 + 1];
-          let tz = tangents[i * 3 + 2];
-
-          // normal에 대한 tangent 정규화 (N과 tangent를 직교화)
+          const nx = normals[i * 3],
+            ny = normals[i * 3 + 1],
+            nz = normals[i * 3 + 2];
+          let tx = tangents[i * 3],
+            ty = tangents[i * 3 + 1],
+            tz = tangents[i * 3 + 2];
           const NdotT = nx * tx + ny * ty + nz * tz;
           tx = tx - NdotT * nx;
           ty = ty - NdotT * ny;
           tz = tz - NdotT * nz;
-
           let tlen = Math.sqrt(tx * tx + ty * ty + tz * tz);
           if (tlen > 0.0) {
             tx /= tlen;
             ty /= tlen;
             tz /= tlen;
           }
-
-          tangents[i * 3 + 0] = tx;
+          tangents[i * 3] = tx;
           tangents[i * 3 + 1] = ty;
           tangents[i * 3 + 2] = tz;
 
-          // bitangent
-          let bx = bitangents[i * 3 + 0];
-          let by = bitangents[i * 3 + 1];
-          let bz = bitangents[i * 3 + 2];
-
+          let bx = bitangents[i * 3],
+            by = bitangents[i * 3 + 1],
+            bz = bitangents[i * 3 + 2];
           const NdotB = nx * bx + ny * by + nz * bz;
           bx = bx - NdotB * nx;
           by = by - NdotB * ny;
           bz = bz - NdotB * nz;
-
           let blen = Math.sqrt(bx * bx + by * by + bz * bz);
           if (blen > 0.0) {
             bx /= blen;
             by /= blen;
             bz /= blen;
           }
-
-          bitangents[i * 3 + 0] = bx;
+          bitangents[i * 3] = bx;
           bitangents[i * 3 + 1] = by;
           bitangents[i * 3 + 2] = bz;
         }
@@ -403,7 +376,90 @@
         });
       }
 
-      // PBR Vertex, Fragment Shaders
+      async function loadOBJAsMeshes(device, url) {
+        const loader = new OBJLoader();
+        const obj = await new Promise((resolve, reject) => {
+          loader.load(
+            url,
+            (obj) => resolve(obj),
+            undefined,
+            (e) => reject(e)
+          );
+        });
+        // obj.children 중 Mesh 찾아 geometry 읽기
+        let meshes = [];
+        obj.traverse((c) => {
+          if (c.isMesh && c.geometry) meshes.push(c);
+        });
+        if (meshes.length == 0) throw Error("No meshes found in obj");
+
+        function createBufferFromArray(arr, usage) {
+          const buf = device.createBuffer({
+            size: arr.byteLength,
+            usage: usage | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(buf, 0, arr);
+          return buf;
+        }
+
+        let meshData = [];
+        for (let m of meshes) {
+          const geom = m.geometry;
+          const positions = geom.attributes.position.array;
+          const normals = geom.attributes.normal.array;
+          let uvs;
+          if (geom.attributes.uv) uvs = geom.attributes.uv.array;
+          else uvs = new Float32Array((positions.length / 3) * 2);
+          let indices;
+          if (geom.index) indices = geom.index.array;
+          else {
+            // 인덱스가 없는 경우 삼각 스트립 가정X. 그냥 순서대로 (0,1,2)...
+            let count = positions.length / 3;
+            indices = new Uint32Array(count);
+            for (let i = 0; i < count; i++) indices[i] = i;
+          }
+
+          const { tangents, bitangents } = computeTangents(
+            positions,
+            normals,
+            uvs,
+            indices
+          );
+
+          const posBuffer = createBufferFromArray(
+            positions,
+            GPUBufferUsage.VERTEX
+          );
+          const normalBuffer = createBufferFromArray(
+            normals,
+            GPUBufferUsage.VERTEX
+          );
+          const uvBuffer = createBufferFromArray(uvs, GPUBufferUsage.VERTEX);
+          const tangentBuffer = createBufferFromArray(
+            tangents,
+            GPUBufferUsage.VERTEX
+          );
+          const bitangentBuffer = createBufferFromArray(
+            bitangents,
+            GPUBufferUsage.VERTEX
+          );
+          const indexBuffer = createBufferFromArray(
+            indices,
+            GPUBufferUsage.INDEX
+          );
+          meshData.push({
+            posBuffer,
+            normalBuffer,
+            uvBuffer,
+            tangentBuffer,
+            bitangentBuffer,
+            indexBuffer,
+            indexCount: indices.length,
+          });
+        }
+        return meshData;
+      }
+
       const vertexShaderWGSL = `@group(0) @binding(0) var<uniform> sceneUniform: mat4x4<f32>;
 @group(0) @binding(1) var<uniform> modelMatrix: mat4x4<f32>;
 @group(0) @binding(2) var<uniform> normalMatrix: mat4x4<f32>;
@@ -428,7 +484,6 @@ struct VertexOutput {
 @vertex
 fn main(input: VertexInput) -> VertexOutput {
   var output: VertexOutput;
-
   let worldPos = modelMatrix * vec4<f32>(input.position, 1.0);
   output.position = sceneUniform * worldPos;
   output.fragPos = worldPos.xyz;
@@ -441,102 +496,97 @@ fn main(input: VertexInput) -> VertexOutput {
   return output;
 }`;
 
-      const fragmentShaderWGSL = `@group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
-@group(0) @binding(4) var colorTex: texture_2d<f32>;  
-@group(0) @binding(5) var etcTex: texture_2d<f32>;    
-@group(0) @binding(6) var normalTex: texture_2d<f32>; 
-@group(0) @binding(7) var mySampler: sampler;
-@group(0) @binding(8) var<uniform> partUniform: u32;
+      const fragmentShaderWGSL = `
+      @group(0) @binding(3) var<uniform> lightDirection: vec3<f32>;
+      @group(0) @binding(4) var<uniform> lightDirection2: vec3<f32>;
+      @group(0) @binding(5) var colorTex: texture_2d<f32>;
+      @group(0) @binding(6) var etcTex: texture_2d<f32>;
+      @group(0) @binding(7) var normalTex: texture_2d<f32>;
+      @group(0) @binding(8) var mySampler: sampler;
 
-const PI = 3.14159265359;
+      const PI = 3.14159265359;
 
-fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
-  return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
-}
+      fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
+        return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+      }
 
-fn ndfGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
-  let a = roughness * roughness;
-  let a2 = a * a;
-  let NdotH = max(dot(N, H), 0.0);
-  let NdotH2 = NdotH * NdotH;
-  let denom = NdotH2 * (a2 - 1.0) + 1.0;
-  return a2 / (PI * denom * denom);
-}
+      fn ndfGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+        let a = roughness * roughness;
+        let a2 = a * a;
+        let NdotH = max(dot(N, H), 0.0);
+        let NdotH2 = NdotH * NdotH;
+        let denom = NdotH2 * (a2 - 1.0) + 1.0;
+        return a2 / (PI * denom * denom);
+      }
 
-fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
-  let k = (roughness + 1.0)*(roughness + 1.0)/8.0;
-  let G1V = dot(N, V)/(dot(N, V)*(1.0 - k) + k);
-  let G1L = dot(N, L)/(dot(N, L)*(1.0 - k) + k);
-  return G1V * G1L;
-}
+      fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+        let k = (roughness + 1.0)*(roughness + 1.0)/8.0;
+        let NdotV = max(dot(N,V),0.0);
+        let NdotL = max(dot(N,L),0.0);
+        let G1V = NdotV/(NdotV*(1.0-k)+k);
+        let G1L = NdotL/(NdotL*(1.0-k)+k);
+        return G1V * G1L;
+      }
 
-struct VertexOutput {
-  @builtin(position) position: vec4<f32>,
-  @location(0) fragPos: vec3<f32>,
-  @location(1) normal: vec3<f32>,
-  @location(2) uv: vec2<f32>,
-  @location(3) tangent: vec3<f32>,
-  @location(4) bitangent: vec3<f32>,
-};
+      struct VertexOutput {
+        @builtin(position) position: vec4<f32>,
+        @location(0) fragPos: vec3<f32>,
+        @location(1) normal: vec3<f32>,
+        @location(2) uv: vec2<f32>,
+        @location(3) tangent: vec3<f32>,
+        @location(4) bitangent: vec3<f32>,
+      };
 
-@fragment
-fn main(input: VertexOutput)->@location(0) vec4<f32> {
-  let baseColor_srgb = textureSample(colorTex,mySampler,input.uv).rgb;
-  let baseColor = pow(baseColor_srgb, vec3<f32>(2.2));
-  let etcColor = textureSample(etcTex,mySampler,input.uv);
-  let AO = etcColor.r;
-  let roughness = etcColor.g;
-  let metallic = etcColor.b;
+ @fragment
+      fn main(input: VertexOutput)->@location(0) vec4<f32> {
+        let baseColor_srgb = textureSample(colorTex,mySampler,input.uv).rgb;
+        var baseColor = pow(baseColor_srgb, vec3<f32>(2.2));
 
-  let normalSample = textureSample(normalTex, mySampler, input.uv).rgb;
-  var N_map = normalSample * 2.0 - 1.0;
-  let tangentNormal = normalize(-N_map);
+        let etcColor = textureSample(etcTex,mySampler,input.uv);
+        let AO = etcColor.r;
+        var roughness = etcColor.g;
+        var metallic = etcColor.b;
 
+        let normalSample = textureSample(normalTex, mySampler, input.uv).rgb;
+        let N_map = normalSample * 2.0 - 1.0;
+        let tangentNormal = normalize(-N_map);
 
-  let T = normalize(input.tangent);
-  let B = normalize(input.bitangent);
-  let N = normalize(input.normal);
-  let TBN = mat3x3<f32>(T, B, N);
+        let T = normalize(input.tangent);
+        let B = normalize(input.bitangent);
+        let N = normalize(input.normal);
+        let TBN = mat3x3<f32>(T, B, N);
 
-  let worldNormal = normalize(TBN * tangentNormal);
+        let worldNormal = normalize(TBN * tangentNormal);
 
-  let L = normalize(-lightDirection);
-  let V = normalize(-input.fragPos);
-  let H = normalize(L + V);
+        let L = normalize(-lightDirection);
+        let L2 = normalize(-lightDirection2);
+        let V = normalize(-input.fragPos);
+        let H = normalize(L + V);
 
-  let NDF = ndfGGX(worldNormal, H, roughness);
-  let G = geometrySmith(worldNormal, V, L, roughness);
-  let F0 = mix(vec3<f32>(0.04,0.04,0.04), baseColor, metallic);
-  let F = fresnelSchlick(max(dot(H, V),0.0), F0);
+        let NdotV = max(dot(worldNormal, V),0.0);
+        let NdotL = max(dot(worldNormal, L),0.0);
+        let NdotL2 = max(dot(worldNormal, L2),0.0);
 
-  let kS = F * (NDF * G) / (4.0 * max(dot(worldNormal, V),0.0) * max(dot(worldNormal, L),0.0) + 0.001);
-  let kD = vec3<f32>(1.0) - F;
-  let kDWeighted = kD * (1.0 - metallic);
+        let NDF = ndfGGX(worldNormal, H, roughness);
+        let G = geometrySmith(worldNormal, V, L, roughness);
+        let F0 = mix(vec3<f32>(0.04,0.04,0.04), baseColor, metallic);
+        let F = fresnelSchlick(max(dot(H, V),0.0), F0);
 
-  let diffuse = max(dot(worldNormal, L),0.0)*baseColor;
-  let ambient = AO * vec3<f32>(0.1,0.1,0.1);
-  var finalColor = ambient + kDWeighted*diffuse + kS;
+        let kS = F * (NDF * G) / (4.0 * NdotV * NdotL + 0.001);
+        let kD = (vec3<f32>(1.0)-F)*(1.0-metallic);
 
-  // partUniform에 따른 색 변형
-  if (partUniform == 0u) {
-    finalColor *= vec3<f32>(0.35,0.45,0.35);
-  } else if (partUniform == 1u) {
-    finalColor *= vec3<f32>(0.4,0.5,0.4);
-  } else if (partUniform == 2u) {
-    finalColor *= vec3<f32>(1,1,1);
-  } else if (partUniform == 3u) {
-    finalColor *= vec3<f32>(0.4,0.3,0.1);
-  } else if (partUniform == 4u) {
-    finalColor *= vec3<f32>(0.1,0.2,0.1);
-  } else if (partUniform == 5u) {
-    finalColor *= vec3<f32>(0.1,0.2,0.1);
-  }
+        let diffuse = NdotL * baseColor;
+        let diffuse2 = NdotL2 * baseColor;
+        let ambientIntensity = 0.005;
+        let ambient = AO * vec3<f32>(ambientIntensity, ambientIntensity, ambientIntensity);
 
-  let gamma = 2.2;
-  finalColor = pow(finalColor, vec3<f32>(1.0/gamma));
-  return vec4<f32>(finalColor, 1.0);
-}
-`;
+        var finalColor = ambient + kD*diffuse + kS + kD*diffuse2*0.5; // 두번째 광원 조금 약하게
+
+        let gamma = 2.2;
+        finalColor = pow(finalColor, vec3<f32>(1.0/gamma));
+        return vec4<f32>(finalColor, 1.0);
+      }
+    `;
 
       function createRenderPipeline(
         device,
@@ -596,6 +646,63 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
           },
         });
       }
+
+      let shellLaunched = false;
+      let shellPaused = false;
+      let shellPos = [0, 0, 0];
+      let shellVel = [0, 0, 0];
+      const gravity = 9.8 * 0.3;
+      const initialSpeed = 3.0;
+      let M_barrel_glob = new Float32Array(16); // 전역 배럴 매트릭스
+
+      // 스페이스: 포탄 발사
+      // p: 포즈 토글
+      window.addEventListener("keydown", (e) => {
+        if (e.key === " ") {
+          if (!shellLaunched && M_barrel_glob) {
+            // M_barrel_glob 있어야
+            shellLaunched = true;
+            shellPaused = false;
+            // 배럴 끝 위치
+            let barrelEnd = [0.6, 0, 0, 1];
+            let barrelEndWorld = vec4.transformMat4(barrelEnd, M_barrel_glob);
+            shellPos = [
+              barrelEndWorld[0],
+              barrelEndWorld[1],
+              barrelEndWorld[2],
+            ];
+
+            // 배럴 방향
+            let dir = [M_barrel_glob[0], M_barrel_glob[1], M_barrel_glob[2]];
+            let len = Math.sqrt(
+              dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]
+            );
+            dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+            shellVel = [
+              dir[0] * initialSpeed,
+              dir[1] * initialSpeed,
+              dir[2] * initialSpeed,
+            ];
+          }
+        } else if (e.key === "p") {
+          if (shellLaunched) shellPaused = !shellPaused;
+        }
+      });
+
+      function updateShell() {
+        if (shellLaunched && !shellPaused) {
+          let dt = 1 / 60;
+          shellVel[1] -= gravity * dt;
+          shellPos[0] += shellVel[0] * dt;
+          shellPos[1] += shellVel[1] * dt;
+          shellPos[2] += shellVel[2] * dt;
+          if (shellPos[1] < 0) {
+            shellPos[1] = 0;
+            shellVel = [0, 0, 0];
+          }
+        }
+      }
+
       async function main() {
         const canvas = document.getElementById("webgpu-canvas");
         const adapter = await navigator.gpu.requestAdapter();
@@ -622,6 +729,11 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
 
         // 탱크 로딩
         const meshData = await loadAllMeshesFromGLTF(device, "models/tank.glb");
+        const shellData = await loadAllMeshesFromGLTF(
+          device,
+          "models/88mm_shell.glb"
+        );
+        // const shellData = await loadOBJAsMeshes(device, "models/shell.obj");
 
         // 텍스처 로딩
         const tankColor = await loadImageAsTexture(
@@ -650,7 +762,12 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
           "textures/shell-normal.png"
         );
 
-        const sampler = createSampler(device);
+        const sampler = device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          maxAnisotropy: 16,
+        });
 
         const sceneBuffer = device.createBuffer({
           size: 64,
@@ -665,6 +782,10 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         const lightBuffer = device.createBuffer({
+          size: 12,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        const lightBuffer2 = device.createBuffer({
           size: 12,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
@@ -710,12 +831,12 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
               { binding: 0, resource: { buffer: sceneBuffer } },
               { binding: 1, resource: { buffer: modelBuffer } },
               { binding: 2, resource: { buffer: normalMatrixBuffer } },
-              { binding: 3, resource: { buffer: lightBuffer } },
-              { binding: 4, resource: colorTex.createView() },
-              { binding: 5, resource: etcTex.createView() },
-              { binding: 6, resource: normalTex.createView() },
-              { binding: 7, resource: sampler },
-              { binding: 8, resource: { buffer: partIDBuf } },
+              { binding: 3, resource: { buffer: lightBuffer } }, // 첫 번째 광원
+              { binding: 4, resource: { buffer: lightBuffer2 } }, // 두 번째 광원
+              { binding: 5, resource: colorTex.createView() },
+              { binding: 6, resource: etcTex.createView() },
+              { binding: 7, resource: normalTex.createView() },
+              { binding: 8, resource: sampler },
             ],
           });
         }
@@ -753,8 +874,7 @@ fn main(input: VertexOutput)->@location(0) vec4<f32> {
         const bindGroup_Shell = createBindGroup(
           shellColor,
           shellEtc,
-          shellNormal,
-          partIDBuffer_Shell
+          shellNormal
         );
 
         // 그리드와 로컬 축 파이프라인
@@ -823,10 +943,10 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             lines.push(...[0, 0, 1, 0, 0, 1]);
 
             for (let i = -5; i <= 5; i++) {
-              lines.push(...[-5, 0, i, 0.7, 0.7, 0.7]);
-              lines.push(...[5, 0, i, 0.7, 0.7, 0.7]);
-              lines.push(...[i, 0, -5, 0.7, 0.7, 0.7]);
-              lines.push(...[i, 0, 5, 0.7, 0.7, 0.7]);
+              lines.push(...[-5, 0, i, 1.0, 1.0, 1.0]);
+              lines.push(...[5, 0, i, 1.0, 1.0, 1.0]);
+              lines.push(...[i, 0, -5, 1.0, 1.0, 1.0]);
+              lines.push(...[i, 0, 5, 1.0, 1.0, 1.0]);
             }
 
             const data = new Float32Array(lines);
@@ -946,6 +1066,20 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           barrelElevation: 0,
         };
 
+        function updateShell() {
+          if (shellLaunched && !shellPaused) {
+            let dt = 1 / 60;
+            shellVel[1] -= gravity * dt;
+            shellPos[0] += shellVel[0] * dt;
+            shellPos[1] += shellVel[1] * dt;
+            shellPos[2] += shellVel[2] * dt;
+            if (shellPos[1] < 0) {
+              shellPos[1] = 0;
+              shellVel = [0, 0, 0];
+            }
+          }
+        }
+
         window.addEventListener("keydown", (e) => {
           let forwardX = Math.cos(tankState.rotation);
           let forwardZ = Math.sin(tankState.rotation);
@@ -1000,8 +1134,11 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           renderPass.drawIndexed(mesh.indexCount, 1, 0, 0, 0);
         }
 
+        let M_barrel = mat4.identity();
+
         function renderFrame(time) {
           UI.update_VP();
+          updateShell();
 
           let M_body = mat4.identity();
           M_body = mat4.translate(M_body, [
@@ -1016,10 +1153,7 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             [0, 1, 0],
             tankState.turretRotation
           );
-          let M_innerWheel = M_body;
-          let M_outerWheel = M_body;
-
-          let M_barrel = mat4.translate(M_turret, barrelPivot);
+          M_barrel = mat4.translate(M_turret, barrelPivot);
           M_barrel = mat4.rotateX(M_barrel, tankState.barrelElevation);
           M_barrel = mat4.translate(M_barrel, [
             -barrelPivot[0],
@@ -1027,10 +1161,22 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
             -barrelPivot[2],
           ]);
 
-          let M_shell = mat4.translate(M_body, [0.5, 0.5, -0.5]); // 쉘 위치 예시
+          for (let i = 0; i < 16; i++) M_barrel_glob[i] = M_barrel[i]; // M_barrel_glob 갱신
 
-          const lightDir = new Float32Array([0.3, 1.0, 0.3]);
+          let M_innerWheel = M_body;
+          let M_outerWheel = M_body;
+
+          let M_shell_t = mat4.identity();
+          M_shell_t = mat4.translate(M_shell_t, shellPos);
+          // 포탄 크기 축소
+          M_shell_t = mat4.scale(M_shell_t, [0.001, 0.001, 0.001]);
+
+          // 라이트 설정
+          const lightDir = new Float32Array([-2, 5, 2]);
           device.queue.writeBuffer(lightBuffer, 0, lightDir);
+          const lightDir2 = new Float32Array([-2, 5, -2]);
+          device.queue.writeBuffer(lightBuffer2, 0, lightDir2);
+
           device.queue.writeBuffer(sceneBuffer, 0, UI.matrices.VP);
 
           const depthTexture = createDepthTexture(
@@ -1047,7 +1193,7 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
               {
                 view: textureView,
                 loadOp: "clear",
-                clearValue: { r: 0.15, g: 0.15, b: 0.15, a: 1 },
+                clearValue: { r: 0.3, g: 0.3, b: 0.3, a: 1 },
                 storeOp: "store",
               },
             ],
@@ -1072,8 +1218,8 @@ fn fs_main(input:VertexOutput)->@location(0) vec4<f32>{
           drawPart(renderPass, M_outerWheel, bindGroup_OuterWheel, meshData[3]);
           drawPart(renderPass, M_barrel, bindGroup_Barrel, meshData[4]);
 
-          if (meshData.length > 5) {
-            drawPart(renderPass, M_shell, bindGroup_Shell, meshData[5]);
+          if (shellLaunched) {
+            drawPart(renderPass, M_shell_t, bindGroup_Shell, shellData[0]);
           }
 
           // 로컬 축
